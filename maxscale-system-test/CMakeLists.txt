@@ -55,6 +55,7 @@ add_subdirectory(cdc_datatypes)
 add_test_executable(cooperative_monitoring.cpp cooperative_monitoring cooperative_monitoring LABELS REPL_BACKEND SECOND_MAXSCALE)
 
 add_subdirectory(mariadbmonitor)
+add_subdirectory(pinloki)
 
 # MariaDB-Monitor enforce_simple_topology
 add_test_executable(mysqlmon_enforce_simple.cpp mysqlmon_enforce_simple mysqlmon_enforce_simple LABELS mysqlmon REPL_BACKEND)
