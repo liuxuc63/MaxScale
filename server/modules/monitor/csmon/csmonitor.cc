@@ -1262,42 +1262,73 @@ void CsMonitor::cs_remove_node(json_t** ppOutput,
                 statuses.erase(statuses.begin() + offset);
                 configs.erase(configs.begin() + offset);
 
-                // Configs should be the same, but nonetheless the one whose uptime is
-                // the longest should be chosen.
-                auto jt = std::max_element(statuses.begin(), statuses.end(), [](const auto&l, const auto& r)
-                                           {
-                                               return l.uptime < r.uptime;
-                                           });
-
-                offset = jt - statuses.begin();
-
-                auto& config = *(configs.begin() + offset);
-
-                string ddlproc_ip;
-                string dmlproc_ip;
-                if (config.get_ddlproc_ip(&ddlproc_ip, pOutput)
-                    && config.get_dmlproc_ip(&dmlproc_ip, pOutput))
+                if (sv.size() != 0)
                 {
-                    bool is_critical =
-                        pRemove_server->address() == ddlproc_ip
-                        || pRemove_server->address() == dmlproc_ip;
+                    // Configs should be the same, but nonetheless the one whose uptime is
+                    // the longest should be chosen.
+                    auto jt = std::max_element(statuses.begin(), statuses.end(),
+                                               [](const auto&l, const auto& r)
+                                               {
+                                                   return l.uptime < r.uptime;
+                                               });
 
-                    string body = create_remove_config(config, pRemove_server, force, is_critical);
+                    offset = jt - statuses.begin();
 
-                    http::Results results;
-                    if (CsMonitorServer::set_config(sv, body, m_http_config, &results))
+                    auto& config = *(configs.begin() + offset);
+
+                    string ddlproc_ip;
+                    string dmlproc_ip;
+                    if (config.get_ddlproc_ip(&ddlproc_ip, pOutput)
+                        && config.get_dmlproc_ip(&dmlproc_ip, pOutput))
                     {
-                        success = true;
+                        bool is_critical =
+                            pRemove_server->address() == ddlproc_ip
+                            || pRemove_server->address() == dmlproc_ip;
+
+                        string body = create_remove_config(config, pRemove_server, force, is_critical);
+
+                        http::Results results;
+                        if (CsMonitorServer::set_config(sv, body, m_http_config, &results))
+                        {
+                            success = true;
+                        }
+                        else
+                        {
+                            LOG_APPEND_JSON_ERROR(&pOutput, "Could not send new config to all servers.");
+                            results_to_json(sv, results, &pServers);
+                        }
                     }
                     else
                     {
-                        LOG_APPEND_JSON_ERROR(&pOutput, "Could not send new config to all servers.");
-                        results_to_json(sv, results, &pServers);
+                        LOG_PREPEND_JSON_ERROR(&pOutput, "Could not find current DDLProc/DMLProc.");
                     }
                 }
-                else
+
+                if (success)
                 {
-                    LOG_PREPEND_JSON_ERROR(&pOutput, "Could not find current DDLProc/DMLProc.");
+                    int n;
+                    n = cs::remove(*remove_config.sXml.get(), "//ClusterManager");
+                    mxb_assert(n == 1);
+                    n = cs::update_if_not(*remove_config.sXml.get(), "//IPAddr", "127.0.0.1", "0.0.0.0");
+                    mxb_assert(n >= 0);
+
+                    xmlChar* pConfig = nullptr;
+                    int size = 0;
+
+                    xmlDocDumpMemory(remove_config.sXml.get(), &pConfig, &size);
+
+                    json_t* pBody = json_object();
+                    json_object_set_new(pBody, cs::keys::CONFIG,
+                                        json_stringn(reinterpret_cast<const char*>(pConfig), size));
+                    xmlFree(pConfig);
+
+                    char* zBody = json_dumps(pBody, 0);
+                    json_decref(pBody);
+
+                    if (pRemove_server->set_config(zBody, &pOutput))
+                    {
+                        MXS_NOTICE("%s: Updated config on '%s'.", trx_id.c_str(), pRemove_server->name());
+                    }
                 }
             }
             else
@@ -1318,9 +1349,11 @@ void CsMonitor::cs_remove_node(json_t** ppOutput,
         results_to_json(sv, results, &pServers);
     }
 
+    sv = servers();
+
     if (success)
     {
-        success = CsMonitorServer::commit(sv, m_http_config, &results);
+        success = CsMonitorServer::commit(servers(), m_http_config, &results);
 
         if (success)
         {
