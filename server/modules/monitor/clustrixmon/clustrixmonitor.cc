@@ -192,6 +192,14 @@ sqlite3* open_or_create_db(const std::string& path)
 
     return pDb;
 }
+
+void run_in_mainworker(const function<void(void)>& func)
+{
+    auto mw = mxs::MainWorker::get();
+    mxb::Semaphore sem;
+    mw->execute(func, &sem, mxb::Worker::EXECUTE_QUEUED);
+    sem.wait();
+}
 }
 
 ClustrixMonitor::Config::Config(const std::string& name)
@@ -684,7 +692,10 @@ bool ClustrixMonitor::refresh_nodes(MYSQL* pHub_con)
 
                                     // New server, so it needs to be added to all services that
                                     // use this monitor for defining its cluster of servers.
-                                    service_add_server(this, pServer);
+                                    run_in_mainworker([this, pServer]() {
+                                        service_add_server(this, pServer);
+                                    });
+
                                 }
                                 else
                                 {
@@ -1009,7 +1020,9 @@ void ClustrixMonitor::populate_from_bootstrap_servers()
 
         // New server, so it needs to be added to all services that
         // use this monitor for defining its cluster of servers.
-        service_add_server(this, pServer);
+        run_in_mainworker([this, pServer]() {
+            service_add_server(this, pServer);
+        });
     }
 
     update_http_urls();
